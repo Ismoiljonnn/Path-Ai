@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pathai</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="main.css">
+</head>
+<body>
+  <div class="app-wrapper">
+
+    <!-- ===== Icon Navigation Sidebar ===== -->
+    <aside class="sidebar-icons">
+      <div class="nav-item ripple" id="menuBtn">
+        <div class="hamburger">
+          <span></span><span></span><span></span>
+        </div>
+      </div>
+      <div class="nav-item active" data-page="home" onclick="navigate('home')">
+        <i class="fas fa-home nav-icon"></i>
+      </div>
+      <div class="nav-item" data-page="archive" onclick="navigate('archive')">
+        <i class="fas fa-archive nav-icon"></i>
+      </div>
+      <div class="nav-item" data-page="profile" onclick="navigate('profile')">
+        <i class="fas fa-user nav-icon"></i>
+      </div>
+    </aside>
+
+    <!-- ===== Drawer Overlay ===== -->
+    <div class="overlay" id="overlay"></div>
+
+    <!-- ===== Side Drawer (hamburger menu) ===== -->
+    <div class="side-drawer" id="sideDrawer">
+      <div class="drawer-header">
+        <h2 class="drawer-brand">Pathai</h2>
+        <button class="drawer-close" onclick="closeDrawer()"><i class="fas fa-times"></i></button>
+      </div>
+
+      <div class="drawer-section">
+        <div class="drawer-section-title" id="txt-settings">Settings</div>
+        <div class="drawer-row">
+          <div class="drawer-row-left">
+            <i class="fas fa-moon"></i>
+            <span id="txt-dark-mode">Dark Mode</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="themeToggle" checked onchange="toggleTheme()">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="drawer-section">
+        <div class="drawer-section-title" id="txt-language">Language</div>
+        <div class="lang-options">
+          <div class="lang-option active" onclick="setLanguage('en')" id="lang-en">
+            <span class="lang-flag">🇺🇸</span>
+            <span>English</span>
+            <i class="fas fa-check lang-check" id="check-en"></i>
+          </div>
+          <div class="lang-option" onclick="setLanguage('uz')" id="lang-uz">
+            <span class="lang-flag">🇺🇿</span>
+            <span>O'zbek</span>
+            <i class="fas fa-check lang-check" id="check-uz" style="display:none"></i>
+          </div>
+          <!-- <div class="lang-option disabled">
+            <span class="lang-flag">🇷🇺</span>
+            <span>Русский</span>
+            <span class="coming-soon">Soon</span>
+          </div>
+          <div class="lang-option disabled">
+            <span class="lang-flag">🇩🇪</span>
+            <span>Deutsch</span>
+            <span class="coming-soon">Soon</span>
+          </div>
+          <div class="lang-option disabled">
+            <span class="lang-flag">🇫🇷</span>
+            <span>Français</span>
+            <span class="coming-soon">Soon</span>
+          </div> -->
+        </div>
+      </div>
+
+      <!-- <div class="drawer-section">
+        <div class="drawer-section-title">Gemini API Key</div>
+        <div class="api-key-wrap">
+          <input type="password" id="apiKeyInput" class="api-input" placeholder="Enter Gemini API Key...">
+          <button class="api-save-btn" onclick="saveApiKey()"><i class="fas fa-check"></i></button>
+        </div>
+        <p class="api-hint">Get your key at <a href="https://aistudio.google.com/apikey" target="_blank" class="api-link">aistudio.google.com</a></p>
+      </div> -->
+
+      <div class="drawer-footer">
+        <span>Pathai v1.1</span>
+        <span>·</span>
+        <span>by developer</span>
+      </div>
+    </div>
+
+    <!-- ===== Content Sidebar ===== -->
+    <div class="sidebar-content" id="sidebar-content"></div>
+
+    <!-- ===== Resizer ===== -->
+    <div class="resizer" id="resizer"></div>
+
+    <!-- ===== Main Content ===== -->
+    <main class="main-content" id="main-content"></main>
+
+  </div>
+
+  <!-- ===== Create Goal Modal ===== -->
+  <div class="modal-overlay hidden" id="createGoalOverlay" onclick="closeCreateGoal()"></div>
+  <div class="modal hidden" id="createGoalModal">
+    <div class="modal-header">
+      <h3 id="txt-new-goal">New Goal</h3>
+      <button class="modal-close-btn" onclick="closeCreateGoal()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="text" class="modal-input" id="goalTitleInput" placeholder="What do you want to achieve?" maxlength="120" onkeydown="if(event.key==='Enter') createGoal()">
+      <button class="primary-btn" id="createGoalBtn" onclick="createGoal()">
+        <i class="fas fa-wand-magic-sparkles" style="margin-right:7px"></i>
+        <span id="txt-create">Create Goal</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ===== Notes Modal ===== -->
+  <div class="modal-overlay hidden" id="notesOverlay" onclick="closeNotesModal()"></div>
+  <div class="modal hidden" id="notesModal">
+    <div class="modal-header">
+      <h3 id="txt-notes-title">Notes</h3>
+      <button class="modal-close-btn" onclick="closeNotesModal()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <textarea class="modal-textarea" id="notesInput" placeholder="Write your notes..." onkeydown="if(event.ctrlKey && event.key==='Enter') saveNote()"></textarea>
+      <div class="modal-hint" id="txt-notes-hint">Ctrl+Enter to save</div>
+      <button class="primary-btn" onclick="saveNote()"><span id="txt-save">Save</span></button>
+    </div>
+  </div>
+
+  <!-- ===== Delete Modal ===== -->
+  <div class="modal-overlay hidden" id="deleteOverlay" onclick="closeDeleteModal()"></div>
+  <div class="modal hidden" id="deleteModal">
+    <div class="modal-header">
+      <h3 class="danger-title" id="txt-delete-heading">Delete Goal</h3>
+      <button class="modal-close-btn" onclick="closeDeleteModal()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <p class="modal-text" id="txt-delete-confirm">Are you sure? This cannot be undone.</p>
+      <div class="modal-actions-row">
+        <button class="secondary-btn" onclick="closeDeleteModal()" id="txt-cancel">Cancel</button>
+        <button class="danger-btn" onclick="confirmDelete()" id="txt-delete">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="index.js"></script>
+</body>
+</html>
