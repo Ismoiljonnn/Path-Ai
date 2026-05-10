@@ -1048,6 +1048,7 @@ input:checked + .slider::before { transform: translateX(20px); }
 ================================================================ */
 .sb-empty { padding: 24px 18px; font-size: 13px; color: var(--text-3); text-align: center; line-height: 1.6; }
 
+
 /* ================================================================
    Responsive
 ================================================================ */
