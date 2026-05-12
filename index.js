@@ -8,7 +8,7 @@
 // ================================================================
 const I18N = {
   en: {
-    'app.name': 'Pathai',
+    'app.name': 'Myjourney',
     'settings': 'Settings',
     'dark.mode': 'Dark Mode',
     'language': 'Language',
