@@ -1,14 +1,15 @@
 /* ================================================================
-   Pathai — index.js
-   Full app logic: state, routing, Gemini API, UI render
-================================================================ */
+   MyJourney — index.js
+   Full app logic: state, routing, UI render
+   Modified to use Django backend for AI
+=============================================================== */
 
 // ================================================================
 //  i18n
 // ================================================================
 const I18N = {
   en: {
-    'app.name': 'Myjourney',
+    'app.name': 'MyJourney',
     'settings': 'Settings',
     'dark.mode': 'Dark Mode',
     'language': 'Language',
@@ -46,13 +47,18 @@ const I18N = {
     'tier.locked': 'Complete the current tier first',
     'tier.unlocked': 'Tier {n} unlocked! 🎉',
     'goal.archived': 'Goal completed and archived! 🏆',
-    'api.saved': 'API key saved ✓',
-    'api.missing': 'Add your Gemini API key in the menu first',
     'profile.saved': 'Profile saved ✓',
     'completed': 'Completed',
+    'error': 'Something went wrong',
+    'leaderboard': 'Leaderboard',
+    'weekly': 'Weekly',
+    'all_time': 'All Time',
+    'rank': 'Rank',
+    'points': 'Points',
+    'no_data': 'No data yet',
   },
   uz: {
-    'app.name': 'Pathai',
+    'app.name': 'MyJourney',
     'settings': 'Sozlamalar',
     'dark.mode': 'Tungi rejim',
     'language': 'Til',
@@ -90,10 +96,15 @@ const I18N = {
     'tier.locked': 'Avval joriy tierni tugatib oling',
     'tier.unlocked': '{n}-tier ochildi! 🎉',
     'goal.archived': 'Maqsad tugallandi va arxivga o\'tdi! 🏆',
-    'api.saved': 'API kalit saqlandi ✓',
-    'api.missing': 'Avval menyudan Gemini API kalitini kiriting',
     'profile.saved': 'Profil saqlandi ✓',
     'completed': 'Tugallandi',
+    'error': 'Xatolik yuz berdi',
+    'leaderboard': 'Reyting',
+    'weekly': 'Haftalik',
+    'all_time': 'Umumiy',
+    'rank': 'O\'rin',
+    'points': 'Ballar',
+    'no_data': 'Ma\'lumot yo\'q',
   }
 };
 
@@ -109,17 +120,20 @@ function t(key, vars = {}) {
 //  State
 // ================================================================
 let state = {
+  userId: null,
   goals: [],
   profile: { name: '', surname: '', bio: '', interests: '' },
-  settings: { language: 'en', theme: 'dark', geminiApiKey: '' }
+  settings: { language: 'en', theme: 'dark' }
 };
 
 // Runtime (not persisted)
 let currentPage  = 'home';
 let currentGoalId = null;
 let currentTierIdx = 0;
-let editingQuestRef = null;  // { goalId, tierIdx, questIdx }
+let editingQuestRef = null;
 let deletingGoalId  = null;
+let isRegisterMode = false;
+let isAuthenticated = false;
 
 // ================================================================
 //  Persistence
@@ -137,6 +151,31 @@ function loadState() {
   } catch(_) {}
 }
 
+async function loadGoalsFromServer() {
+  try {
+    const response = await fetch('/api/goals/');
+    if (!response.ok) {
+      showToast('Failed to load goals from server');
+      return;
+    }
+    const data = await response.json();
+    state.goals = [];
+    if (data.goals && data.goals.length > 0) {
+      state.goals = data.goals.map(g => ({
+        id: String(g.id),
+        title: g.title,
+        createdAt: new Date(g.created_at).getTime(),
+        status: 'active',
+        currentTier: g.current_tier !== undefined ? g.current_tier : 0,
+        tiers: g.tiers || []
+      }));
+    }
+  } catch (err) {
+    console.error('Failed to load goals:', err);
+    showToast('Could not connect to server');
+  }
+}
+
 function deepMerge(target, source) {
   const out = { ...target };
   for (const key of Object.keys(source)) {
@@ -152,8 +191,26 @@ function deepMerge(target, source) {
 // ================================================================
 //  Boot
 // ================================================================
-window.onload = () => {
+window.onload = async () => {
   loadState();
+  
+  // Ensure goals is always an array
+  if (!Array.isArray(state.goals)) {
+    state.goals = [];
+  }
+  
+  if (state.userId) {
+    await checkAuth();
+  }
+  
+  if (!isAuthenticated) {
+    showAuthModal();
+    return;
+  }
+  
+  // Load goals from server
+  await loadGoalsFromServer();
+  
   applyTheme();
   initDrawer();
   initResizer();
@@ -190,7 +247,6 @@ function setLanguage(lang) {
 }
 
 function syncDrawerUI() {
-  // Language checkmarks
   ['en', 'uz'].forEach(l => {
     const chk = document.getElementById('check-' + l);
     if (chk) chk.style.display = l === state.settings.language ? 'inline' : 'none';
@@ -198,18 +254,10 @@ function syncDrawerUI() {
     if (opt) opt.classList.toggle('active', l === state.settings.language);
   });
 
-  // Drawer text
   setEl('txt-settings',  t('settings'));
   setEl('txt-dark-mode', t('dark.mode'));
   setEl('txt-language',  t('language'));
 
-  // API key
-  const apiInput = document.getElementById('apiKeyInput');
-  if (apiInput && state.settings.geminiApiKey) {
-    apiInput.value = state.settings.geminiApiKey;
-  }
-
-  // Theme toggle
   const toggle = document.getElementById('themeToggle');
   if (toggle) toggle.checked = state.settings.theme === 'dark';
 }
@@ -217,16 +265,6 @@ function syncDrawerUI() {
 function setEl(id, text) {
   const el = document.getElementById(id);
   if (el) el.textContent = text;
-}
-
-// ================================================================
-//  API Key
-// ================================================================
-function saveApiKey() {
-  const val = (document.getElementById('apiKeyInput')?.value || '').trim();
-  state.settings.geminiApiKey = val;
-  saveState();
-  showToast(t('api.saved'));
 }
 
 // ================================================================
@@ -264,7 +302,7 @@ function initResizer() {
 
   function onMove(e) {
     if (!dragging) return;
-    const newW = e.clientX - 71;  // subtract icon sidebar width
+    const newW = e.clientX - 71;
     if (newW > 180 && newW < 620) sb.style.width = newW + 'px';
   }
   function onUp() {
@@ -281,7 +319,6 @@ function initResizer() {
 function initEsc() {
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
-    // Priority: close modals first, then close goal detail
     if (isVisible('createGoalModal')) { closeCreateGoal(); return; }
     if (isVisible('notesModal'))      { closeNotesModal(); return; }
     if (isVisible('deleteModal'))     { closeDeleteModal(); return; }
@@ -336,6 +373,173 @@ function showToast(msg) {
 }
 
 // ================================================================
+//  Auth
+// ================================================================
+function showAuthModal() {
+  document.getElementById('authOverlay').classList.remove('hidden');
+  document.getElementById('authModal').classList.remove('hidden');
+  document.getElementById('auth-username').value = '';
+  document.getElementById('auth-password').value = '';
+  document.getElementById('auth-bio').value = '';
+  document.getElementById('auth-interests').value = '';
+  updateAuthUI();
+}
+
+function closeAuthModal() {
+  document.getElementById('authOverlay').classList.add('hidden');
+  document.getElementById('authModal').classList.add('hidden');
+}
+
+function toggleAuthMode() {
+  isRegisterMode = !isRegisterMode;
+  updateAuthUI();
+}
+
+function updateAuthUI() {
+  document.getElementById('auth-title').textContent = isRegisterMode ? 'Create Account' : 'Login';
+  document.getElementById('auth-btn-text').textContent = isRegisterMode ? 'Register' : 'Login';
+  document.getElementById('auth-toggle-text').textContent = isRegisterMode ? 'Already have an account?' : "Don't have an account?";
+  document.getElementById('auth-toggle-action').textContent = isRegisterMode ? 'Login' : 'Register';
+  document.getElementById('auth-bio').style.display = isRegisterMode ? 'block' : 'none';
+  document.getElementById('auth-interests').style.display = isRegisterMode ? 'block' : 'none';
+}
+
+async function handleAuth() {
+  const username = document.getElementById('auth-username').value.trim();
+  const password = document.getElementById('auth-password').value;
+  const bio = document.getElementById('auth-bio').value.trim();
+  const interests = document.getElementById('auth-interests').value.trim();
+  
+  if (!username || !password) {
+    showToast('Please fill in all required fields');
+    return;
+  }
+  
+  const endpoint = isRegisterMode ? '/api/register/' : '/api/login/';
+  const body = { username, password };
+  if (isRegisterMode) {
+    body.bio = bio;
+    body.interests = interests;
+  }
+  
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    
+    const data = await response.json();
+    
+    if (response.ok && data.success) {
+      const oldUserId = state.userId;
+      const newUserId = data.user.id;
+      
+      // If new user (different account), clear old goals
+      if (oldUserId && oldUserId !== newUserId) {
+        state.goals = [];
+      }
+      
+      state.userId = newUserId;
+      state.profile.name = data.user.username;
+      state.profile.bio = data.user.bio || '';
+      state.profile.interests = data.user.interests || '';
+      isAuthenticated = true;
+      saveState();
+      closeAuthModal();
+      showToast(isRegisterMode ? 'Account created!' : 'Welcome back!');
+      navigate('home');
+    } else {
+      showToast(data.error || 'Authentication failed');
+    }
+  } catch (err) {
+    showToast('Connection error');
+  }
+}
+
+async function checkAuth() {
+  try {
+    const response = await fetch('/api/user/');
+    if (response.ok) {
+      const user = await response.json();
+      state.userId = user.id;
+      state.profile.name = user.username;
+      state.profile.bio = user.bio || '';
+      state.profile.interests = user.interests || '';
+      isAuthenticated = true;
+      saveState();
+    } else {
+      isAuthenticated = false;
+    }
+  } catch (err) {
+    isAuthenticated = false;
+  }
+}
+
+function logout() {
+  fetch('/api/logout/', { method: 'POST' }).then(() => {
+    state.userId = null;
+    state.goals = [];
+    isAuthenticated = false;
+    localStorage.removeItem('pathai_v2');
+    window.location.href = '/login/';
+  });
+}
+
+function exportData() {
+  const data = {
+    version: '1.0',
+    exportDate: new Date().toISOString(),
+    goals: state.goals,
+    profile: state.profile,
+    settings: state.settings
+  };
+  
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `pathai-backup-${new Date().toISOString().split('T')[0]}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('Data exported successfully');
+}
+
+function importData(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const data = JSON.parse(e.target.result);
+      
+      if (!data.goals || !Array.isArray(data.goals)) {
+        showToast('Invalid backup file');
+        return;
+      }
+      
+      if (!confirm('This will replace all your current goals. Continue?')) {
+        return;
+      }
+      
+      state.goals = data.goals;
+      if (data.profile) state.profile = data.profile;
+      if (data.settings) state.settings = data.settings;
+      saveState();
+      renderMain();
+      showToast('Data imported successfully');
+    } catch (err) {
+      showToast('Error reading file');
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+// ================================================================
 //  Navigate
 // ================================================================
 function navigate(pageId) {
@@ -348,6 +552,62 @@ function navigate(pageId) {
 
   renderSidebar();
   renderMain();
+}
+
+// ================================================================
+//  Leaderboard
+// ================================================================
+let currentLeaderboardType = 'weekly';
+let leaderboardData = { weekly: [], all_time: [] };
+
+function switchLeaderboard(type) {
+  currentLeaderboardType = type;
+  document.getElementById('tab-weekly').classList.toggle('active', type === 'weekly');
+  document.getElementById('tab-all').classList.toggle('active', type === 'all_time');
+  renderLeaderboard();
+}
+
+async function loadLeaderboard(type) {
+  try {
+    const response = await fetch('/api/leaderboard/');
+    if (response.ok) {
+      const data = await response.json();
+      leaderboardData = {
+        weekly: data.weekly || [],
+        all_time: data.all_time || []
+      };
+      renderLeaderboard();
+    }
+  } catch (err) {
+    console.error('Failed to load leaderboard:', err);
+    document.getElementById('leaderboard-list').innerHTML = `<div class="empty-state"><p>${t('no_data')}</p></div>`;
+  }
+}
+
+function renderLeaderboard() {
+  const list = document.getElementById('leaderboard-list');
+  const data = leaderboardData[currentLeaderboardType] || [];
+  
+  if (!data.length) {
+    list.innerHTML = `<div class="empty-state"><p>${t('no_data')}</p></div>`;
+    return;
+  }
+  
+  const rows = data.map((user, idx) => {
+    const rankClass = idx === 0 ? 'gold' : idx === 1 ? 'silver' : idx === 2 ? 'bronze' : '';
+    return `
+      <div class="lb-row ${rankClass}">
+        <div class="lb-rank">${idx + 1}</div>
+        <div class="lb-user">${esc(user.username)}</div>
+        <div class="lb-stats">
+          <span class="lb-goals"><i class="fas fa-bullseye"></i> ${user.goals_completed}</span>
+          <span class="lb-quests"><i class="fas fa-check"></i> ${user.quests_completed}</span>
+          <span class="lb-points"><i class="fas fa-star"></i> ${user.points}</span>
+        </div>
+      </div>`;
+  }).join('');
+  
+  list.innerHTML = rows;
 }
 
 // ================================================================
@@ -369,7 +629,7 @@ function goalColor(title) {
 function activeGoals()   { return state.goals.filter(g => g.status !== 'archived'); }
 function archivedGoals() { return state.goals.filter(g => g.status === 'archived'); }
 
-function getGoal(id) { return state.goals.find(g => g.id === id) || null; }
+function getGoal(id) { return state.goals.find(g => g.id == id) || null; }
 
 function totalProgress(goal) {
   const total = goal.tiers.reduce((a, t) => a + t.quests.length, 0);
@@ -494,6 +754,20 @@ function renderMain() {
       main.innerHTML = `<div class="archive-page"><h2 class="page-title">${t('archive')}</h2>${cards}</div>`;
     }
 
+  } else if (currentPage === 'leaderboard') {
+    main.innerHTML = `
+      <div class="leaderboard-page">
+        <h2 class="page-title">${t('leaderboard')}</h2>
+        <div class="lb-tabs">
+          <button class="lb-tab active" onclick="switchLeaderboard('weekly')" id="tab-weekly">${t('weekly')}</button>
+          <button class="lb-tab" onclick="switchLeaderboard('all_time')" id="tab-all">${t('all_time')}</button>
+        </div>
+        <div class="lb-list" id="leaderboard-list">
+          <div class="loading">${t('generating')}</div>
+        </div>
+      </div>`;
+    loadLeaderboard('weekly');
+
   } else if (currentPage === 'profile') {
     const p = state.profile;
     main.innerHTML = `
@@ -554,7 +828,6 @@ function renderGoalDetail(main) {
 
   const { done: tDone, total: tTotal } = tierProgress(tier);
 
-  // Quest list
   const questsHTML = tier.quests.map((q, qi) => `
     <div class="quest-card ${q.completed ? 'done-card' : ''}">
       <div class="quest-row">
@@ -572,7 +845,6 @@ function renderGoalDetail(main) {
       ${q.notes ? `<div class="quest-note-display">${esc(q.notes)}</div>` : ''}
     </div>`).join('');
 
-  // Tiers list
   const tiersHTML = goal.tiers.map((tr, i) => {
     const done = isTierDone(tr);
     const isActive  = i === goal.currentTier;
@@ -640,6 +912,13 @@ function toggleQuest(goalId, tierIdx, questIdx) {
 
   checkTierCompletion(goal, tierIdx);
   saveState();
+  
+  fetch(`/api/goals/${Number(goalId)}/`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: goal.title, tiers: goal.tiers, current_tier: goal.currentTier })
+  }).catch(err => console.error('Failed to sync:', err));
+  
   renderMain();
   renderSidebar();
 }
@@ -651,11 +930,9 @@ function checkTierCompletion(goal, tierIdx) {
   const nextIdx = tierIdx + 1;
 
   if (nextIdx < goal.tiers.length) {
-    // Unlock next tier
     if ((goal.currentTier || 0) <= tierIdx) {
       goal.currentTier = nextIdx;
       showToast(t('tier.unlocked', { n: nextIdx + 1 }));
-      // Auto-navigate to the newly unlocked tier after short delay
       setTimeout(() => {
         if (currentGoalId === goal.id) {
           currentTierIdx = nextIdx;
@@ -664,7 +941,6 @@ function checkTierCompletion(goal, tierIdx) {
       }, 700);
     }
   } else {
-    // All tiers done?
     const allDone = goal.tiers.every(tr => isTierDone(tr));
     if (allDone) {
       goal.status = 'archived';
@@ -740,8 +1016,12 @@ function closeDeleteModal() {
 
 function confirmDelete() {
   if (!deletingGoalId) return;
-  state.goals = state.goals.filter(g => g.id !== deletingGoalId);
-  if (currentGoalId === deletingGoalId) currentGoalId = null;
+  
+  fetch(`/api/goals/${Number(deletingGoalId)}/delete/`, { method: 'DELETE' })
+    .catch(err => console.error('Failed to delete:', err));
+  
+  state.goals = state.goals.filter(g => g.id !== String(deletingGoalId));
+  if (currentGoalId === deletingGoalId || currentGoalId === Number(deletingGoalId)) currentGoalId = null;
   deletingGoalId = null;
   saveState();
   closeDeleteModal();
@@ -756,7 +1036,6 @@ function openCreateGoal() {
   const input = document.getElementById('goalTitleInput');
   if (input) input.value = '';
 
-  // Localize
   setEl('txt-new-goal', t('new.goal'));
   setEl('txt-create', t('create.goal'));
   const inp = document.getElementById('goalTitleInput');
@@ -786,15 +1065,28 @@ async function createGoal() {
   }
 
   try {
-    const tiers = await callGemini(title);
+    const tiers = await callAI(title);
+    
+    const response = await fetch('/api/goals/create/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, tiers })
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to save goal');
+    }
+    
+    const data = await response.json();
     const goal = {
-      id: 'g' + Date.now(),
-      title,
-      createdAt: Date.now(),
+      id: String(data.goal.id),
+      title: data.goal.title,
+      createdAt: new Date(data.goal.created_at).getTime(),
       status: 'active',
       currentTier: 0,
-      tiers
+      tiers: data.goal.tiers
     };
+    
     state.goals.push(goal);
     saveState();
 
@@ -805,7 +1097,7 @@ async function createGoal() {
     renderMain();
 
   } catch (err) {
-    showToast('Error: ' + (err.message || 'Failed'));
+    showToast(t('error') + ': ' + (err.message || 'Failed'));
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -815,624 +1107,66 @@ async function createGoal() {
 }
 
 // ================================================================
-//  Gemini API
+//  AI API - Django Backend
 // ================================================================
+async function callAI(goalTitle) {
+  const p = state.profile;
 
+  const profileContext = {
+    name: p.name || '',
+    surname: p.surname || '',
+    bio: p.bio || '',
+    interests: p.interests || ''
+  };
 
-
-
-// async function callGemini(goalTitle) {
-//   const p = state.profile;
-//   const profileParts = [
-//     p.name   ? `User name: ${p.name} ${p.surname}` : '',
-//     p.bio    ? `About them: ${p.bio}` : '',
-//     p.interests ? `Interests: ${p.interests}` : ''
-//   ].filter(Boolean);
-
-//   const profileContext = profileParts.length
-//     ? `\nUser context:\n${profileParts.join('\n')}\n`
-//     : '';
-
-//   const prompt = `You are an expert goal-achievement coach. Create a structured 10-tier learning roadmap for the following goal.
-// ${profileContext}
-// Goal: "${goalTitle}"
-
-// Rules:
-// - Exactly 10 tiers, progressing from absolute beginner to mastery
-// - Each tier has exactly 10 specific, actionable quests (tasks)
-// - Quests should be concrete and completable, not vague
-// - Tier titles should be short and descriptive (e.g. "Tier 1: Foundations")
-// - Tailor quests to the user's profile if provided
-
-// Respond with ONLY valid JSON, no markdown fences, no extra text:
-// {
-//   "tiers": [
-//     {
-//       "title": "Tier 1: Foundations",
-//       "quests": [
-//         "Quest description 1",
-//         "Quest description 2",
-//         "Quest description 3",
-//         "Quest description 4",
-//         "Quest description 5",
-//         "Quest description 6",
-//         "Quest description 7",
-//         "Quest description 8",
-//         "Quest description 9",
-//         "Quest description 10"
-//       ]
-//     }
-//   ]
-// }`;
-
-//   const resp = await fetch(
-//     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${state.settings.geminiApiKey}`,
-//     {
-//       method: 'POST',
-//       headers: { 'Content-Type': 'application/json' },
-//       body: JSON.stringify({
-//         contents: [{ parts: [{ text: prompt }] }],
-//         generationConfig: { temperature: 0.72, maxOutputTokens: 6000 }
-//       })
-//     }
-//   );
-
-//   if (!resp.ok) {
-//     const body = await resp.json().catch(() => ({}));
-//     throw new Error(body?.error?.message || `HTTP ${resp.status}`);
-//   }
-
-//   const data = await resp.json();
-//   const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-//   if (!rawText) throw new Error('No response from Gemini');
-
-//   // Strip markdown fences just in case
-//   const clean = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/,'').trim();
-//   const parsed = JSON.parse(clean);
-
-//   if (!parsed.tiers || !Array.isArray(parsed.tiers)) {
-//     throw new Error('Invalid response structure from Gemini');
-//   }
-
-//   // Normalize to exactly 10 tiers with 10 quests each
-//   const tiers = [];
-//   for (let i = 0; i < 10; i++) {
-//     const src = parsed.tiers[i] || {};
-//     const rawQ = Array.isArray(src.quests) ? src.quests : [];
-//     const quests = [];
-//     for (let j = 0; j < 10; j++) {
-//       const qTitle = typeof rawQ[j] === 'string' ? rawQ[j]
-//                    : typeof rawQ[j]?.title === 'string' ? rawQ[j].title
-//                    : `Task ${j + 1}`;
-//       quests.push({ title: qTitle, completed: false, notes: '' });
-//     }
-//     tiers.push({
-//       title: typeof src.title === 'string' ? src.title : `Tier ${i + 1}`,
-//       quests
-//     });
-//   }
-
-//   return tiers;
-// }
-
-// async function callGemini(goalTitle) {
-//   const p = state.profile;
-
-//   const profileContext = [
-//     p.name      ? `User name: ${p.name} ${p.surname ?? ''}`.trim() : '',
-//     p.bio       ? `About them: ${p.bio}` : '',
-//     p.interests ? `Interests: ${p.interests}` : '',
-//   ].filter(Boolean).join('\n');
-
-//   const prompt = `You are an expert goal-achievement coach. Create a structured 10-tier learning roadmap.
-// ${profileContext ? `\nUser context:\n${profileContext}\n` : ''}
-// Goal: "${goalTitle}"
-
-// Rules:
-// - Exactly 10 tiers, absolute beginner to mastery
-// - Each tier has exactly 10 concrete, actionable quests
-// - Tier titles: short and descriptive (e.g. "Tier 1: Foundations")
-// - Tailor quests to user profile if provided
-
-// Respond with ONLY valid JSON, no markdown, no extra text:
-// {"tiers":[{"title":"Tier 1: Foundations","quests":["quest 1","quest 2","quest 3","quest 4","quest 5","quest 6","quest 7","quest 8","quest 9","quest 10"]}]}`;
-
-//   // Gemini free tier: 15 RPM, so we try once per model with generous delays
-//   const MODELS = [
-//     'gemini-2.0-flash',
-//     'gemini-2.0-flash-lite',
-//   ];
-
-//   const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
-//   const KEY = state.settings.geminiApiKey;
-
-//   for (let m = 0; m < MODELS.length; m++) {
-//     const model = MODELS[m];
-
-//     // Wait before each model switch (except first attempt)
-//     if (m > 0) await sleep(5000);
-
-//     let lastErr;
-//     for (let attempt = 0; attempt < 3; attempt++) {
-//       // Exponential backoff: 0ms, 4s, 10s
-//       if (attempt > 0) await sleep(attempt === 1 ? 4000 : 10000);
-
-//       try {
-//         const resp = await fetch(`${BASE_URL}/${model}:generateContent?key=${KEY}`, {
-//           method: 'POST',
-//           headers: { 'Content-Type': 'application/json' },
-//           body: JSON.stringify({
-//             contents: [{ parts: [{ text: prompt }] }],
-//             generationConfig: { temperature: 0.7, maxOutputTokens: 6000 },
-//           }),
-//         });
-
-//         // Key problem — stop everything
-//         if (resp.status === 400 || resp.status === 401 || resp.status === 403) {
-//           const body = await resp.json().catch(() => ({}));
-//           const msg = body?.error?.message || `Auth error (${resp.status})`;
-//           throw new Error(msg);
-//         }
-
-//         // Rate limited — retry this model
-//         if (resp.status === 429) {
-//           const body = await resp.json().catch(() => ({}));
-//           lastErr = new Error(body?.error?.message || 'Rate limited (429)');
-//           continue; // go to next attempt with backoff
-//         }
-
-//         // Other HTTP error
-//         if (!resp.ok) {
-//           const body = await resp.json().catch(() => ({}));
-//           lastErr = new Error(body?.error?.message || `HTTP ${resp.status}`);
-//           continue;
-//         }
-
-//         const data    = await resp.json();
-//         const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-//         if (!rawText) {
-//           lastErr = new Error('Empty response from Gemini');
-//           continue;
-//         }
-
-//         return parseGeminiResponse(rawText); // ✅ success
-
-//       } catch (err) {
-//         // Auth errors bubble up immediately
-//         if (err.message.includes('expired') ||
-//             err.message.includes('invalid') ||
-//             err.message.includes('Auth error')) {
-//           throw err;
-//         }
-//         lastErr = err;
-//       }
-//     }
-
-//     // All 3 attempts failed for this model, try next model
-//     console.warn(`Model ${model} failed:`, lastErr?.message);
-//   }
-
-//   throw new Error('All models exhausted. Check your Gemini API key and quota at aistudio.google.com');
-// }
-
-// function sleep(ms) {
-//   return new Promise(r => setTimeout(r, ms));
-// }
-
-// function parseGeminiResponse(rawText) {
-//   // Strip markdown fences
-//   let clean = rawText
-//     .replace(/^```json\s*/i, '')
-//     .replace(/^```\s*/i, '')
-//     .replace(/```\s*$/, '')
-//     .trim();
-
-//   let parsed;
-//   try {
-//     parsed = JSON.parse(clean);
-//   } catch {
-//     // Extract first {...} block as fallback
-//     const match = clean.match(/\{[\s\S]*\}/);
-//     if (!match) throw new Error('Cannot parse Gemini response as JSON');
-//     parsed = JSON.parse(match[0]);
-//   }
-
-//   if (!Array.isArray(parsed?.tiers)) {
-//     throw new Error('Response missing tiers array');
-//   }
-
-//   return Array.from({ length: 10 }, (_, i) => {
-//     const src  = parsed.tiers[i] ?? {};
-//     const rawQ = Array.isArray(src.quests) ? src.quests : [];
-
-//     const quests = Array.from({ length: 10 }, (_, j) => {
-//       const q = rawQ[j];
-//       const title =
-//         typeof q === 'string'        ? q :
-//         typeof q?.title === 'string' ? q.title :
-//         `Task ${j + 1}`;
-//       return { title, completed: false, notes: '' };
-//     });
-
-//     return {
-//       title: typeof src.title === 'string' ? src.title : `Tier ${i + 1}`,
-//       quests,
-//     };
-//   });
-// }
-
-
-// ================================================================
-// AI ROADMAP GENERATOR
-// ================================================================
-
-// const GROQ_URL    = 'https://api.groq.com/openai/v1/chat/completions';
-// const GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-70b-versatile', 'llama3-70b-8192'];
-// const TIERS_COUNT  = 10;
-// const QUESTS_COUNT = 10;
- 
-// const sleep = ms => new Promise(r => setTimeout(r, ms));
- 
-// /* ── 1. Prompt builder (Python _build_prompt logic → JS) ── */
-// function buildGroqPrompt(goalTitle) {
-//   const p = state.profile ?? {};
-//   const ctx = [
-//     p.name        ? `Name: ${[p.name, p.surname].filter(Boolean).join(' ')}` : '',
-//     p.bio         ? `About: ${p.bio}` : '',
-//     p.interests   ? `Interests: ${p.interests}` : '',
-//   ].filter(Boolean).join(', ') || 'General';
- 
-//   return `Generate a roadmap for: "${goalTitle}"
-// User context: ${ctx}
-// Format: JSON array with 100 objects, each having "tier" (1-10), "order" (1-10), "title" (string).
-// Example: [{"tier":1,"order":1,"title":"First step..."},{"tier":1,"order":2,"title":"Second step..."}]
-// Rules: 10 tiers × 10 quests, concrete actionable steps, progress beginner to mastery.`;
-// }
- 
-// /* ── 2. Response parser (Python strip + json.loads logic → JS) ── */
-// function parseGroqResponse(rawText) {
-//   // Strip markdown fences (same as Python)
-//   let clean = rawText.trim();
-//   if (clean.startsWith('```json')) clean = clean.slice(7);
-//   else if (clean.startsWith('```')) clean = clean.slice(3);
-//   if (clean.endsWith('```')) clean = clean.slice(0, -3);
-//   clean = clean.trim();
- 
-//   // Extract JSON array if wrapped in extra text
-//   const start = clean.indexOf('[');
-//   const end   = clean.lastIndexOf(']');
-//   if (start !== -1 && end !== -1) clean = clean.slice(start, end + 1);
- 
-//   let flatQuests;
-//   try {
-//     flatQuests = JSON.parse(clean);
-//   } catch {
-//     throw new Error('JSON parse failed: ' + clean.slice(0, 120));
-//   }
- 
-//   if (!Array.isArray(flatQuests)) throw new Error('Expected JSON array');
- 
-//   // Convert flat [{tier,order,title}] → nested [{title, quests:[]}]
-//   // Same data shape as Python generate_roadmap() return value
-//   const tierMap = {};
-//   for (const q of flatQuests) {
-//     const t = q.tier || 1;
-//     if (!tierMap[t]) tierMap[t] = [];
-//     tierMap[t].push(q);
-//   }
- 
-//   return Array.from({ length: TIERS_COUNT }, (_, i) => {
-//     const tierNum  = i + 1;
-//     const tierQ    = (tierMap[tierNum] || []).sort((a, b) => (a.order || 0) - (b.order || 0));
-//     const quests   = Array.from({ length: QUESTS_COUNT }, (_, j) => ({
-//       title:     tierQ[j]?.title || `Task ${j + 1}`,
-//       completed: false,
-//       notes:     '',
-//     }));
-//     return {
-//       title:  `Tier ${tierNum}`,
-//       quests,
-//     };
-//   });
-// }
- 
-// /* ── 3. Fallback roadmap (Python _fallback_roadmap → JS) ── */
-// function fallbackRoadmap(goalTitle) {
-//   const BASE = [
-//     'Research and understand the fundamentals',
-//     'Set clear measurable objectives',
-//     'Create a detailed action plan',
-//     'Identify required resources',
-//     'Find a mentor or expert in the field',
-//     'Take an introductory course',
-//     'Practice basic skills daily',
-//     'Join a community of practitioners',
-//     'Read top 5 books on the topic',
-//     'Attend relevant events or workshops',
-//     'Build your first project',
-//     'Get feedback from experts',
-//     'Iterate and improve based on feedback',
-//     'Network with professionals in the field',
-//     'Create a portfolio of your work',
-//     'Develop a unique personal approach',
-//     'Teach what you have learned to others',
-//     'Scale your efforts systematically',
-//     'Measure and track your progress',
-//     'Celebrate milestones and reflect',
-//   ];
-//   return Array.from({ length: TIERS_COUNT }, (_, i) => ({
-//     title:  `Tier ${i + 1}`,
-//     quests: Array.from({ length: QUESTS_COUNT }, (_, j) => ({
-//       title:     `${BASE[((i * 10) + j) % BASE.length]} — ${goalTitle}`,
-//       completed: false,
-//       notes:     '',
-//     })),
-//   }));
-// }
- 
-// /* ── 4. Main caller with retry logic (ai_views.py robustness → JS) ── */
-// async function callGemini(goalTitle) {   // name kept so rest of code works unchanged
-//   const apiKey = (state.settings.geminiApiKey || '').trim();
-//   if (!apiKey) throw new Error(t('api.missing'));
- 
-//   const prompt = buildGroqPrompt(goalTitle);
-//   const SYSTEM = 'You are a goal-setting assistant. Generate a roadmap of 100 concrete, specific quests divided into 10 tiers (10 quests per tier). Each quest should be a unique, actionable step. Return ONLY valid JSON array with no additional text.';
- 
-//   let lastError = null;
- 
-//   for (const model of GROQ_MODELS) {
-//     for (let attempt = 0; attempt < 3; attempt++) {
-//       if (attempt > 0) await sleep(attempt * 4000);
- 
-//       try {
-//         const resp = await fetch(GROQ_URL, {
-//           method: 'POST',
-//           headers: {
-//             'Content-Type':  'application/json',
-//             'Authorization': `Bearer ${apiKey}`,
-//           },
-//           body: JSON.stringify({
-//             model,
-//             messages: [
-//               { role: 'system', content: SYSTEM },
-//               { role: 'user',   content: prompt },
-//             ],
-//             temperature:  0.8,
-//             max_tokens:   8000,
-//           }),
-//         });
- 
-//         // 429 → wait and retry
-//         if (resp.status === 429) {
-//           const body  = await resp.json().catch(() => ({}));
-//           const match = (body?.error?.message || '').match(/(\d+)\s*s/);
-//           const wait  = match ? parseInt(match[1], 10) : 15;
-//           await sleep(wait * 1000);
-//           continue;
-//         }
- 
-//         // Auth errors → no point retrying
-//         if (resp.status === 401 || resp.status === 403) {
-//           const body = await resp.json().catch(() => ({}));
-//           throw new Error(body?.error?.message || `Auth error (${resp.status}) — check your Groq API key`);
-//         }
- 
-//         if (!resp.ok) {
-//           lastError = new Error(`HTTP ${resp.status}`);
-//           continue;
-//         }
- 
-//         const data   = await resp.json();
-//         const rawText = data.choices?.[0]?.message?.content;
-//         if (!rawText) { lastError = new Error('Empty AI response'); continue; }
- 
-//         try {
-//           return parseGroqResponse(rawText);
-//         } catch (parseErr) {
-//           lastError = parseErr;
-//           continue;
-//         }
- 
-//       } catch (err) {
-//         // Auth errors bubble up immediately
-//         if (err.message.includes('Auth error') || err.message.includes('API key')) throw err;
-//         lastError = err;
-//         continue;
-//       }
-//     }
-//   }
- 
-//   // All models + retries failed → use fallback
-//   console.warn('Groq failed, using fallback:', lastError?.message);
-//   return fallbackRoadmap(goalTitle);
-// }
- 
-
-/**
- * ── STATIC ROADMAP TEMPLATE ──
- * A structured progression from absolute beginner to mastery.
- * Each tier represents a specific phase of the learning journey.
- */
-const ROADMAP_ARCHETYPE = [
-  {
-    tier: "Foundations & Terminology",
-    steps: [
-      "Define core concepts of {goal}",
-      "Learn the history and evolution of {goal}",
-      "Identify the top 5 industry leaders in {goal}",
-      "Understand the basic vocabulary and jargon",
-      "Research the 'Why' behind successful {goal} projects",
-      "Set up your learning environment for {goal}",
-      "Map out the sub-disciplines within the field",
-      "Join 3 online forums dedicated to {goal}",
-      "Find a beginner's 'Roadmap' specifically for {goal}",
-      "Document your current baseline and 'Day 1' goals"
-    ]
-  },
-  {
-    tier: "Resource Gathering & Tools",
-    steps: [
-      "Select the best 3 books on {goal}",
-      "Curate a YouTube playlist of {goal} tutorials",
-      "Install and configure necessary software/hardware",
-      "Identify high-quality paid vs free resources",
-      "Create a 'Resource Vault' for bookmarking {goal} info",
-      "Set a weekly budget (time/money) for {goal}",
-      "Subscribe to {goal} newsletters for updates",
-      "Analyze the toolkits used by experts in {goal}",
-      "Find an open-source project related to {goal}",
-      "Verify the credibility of your learning sources"
-    ]
-  },
-  {
-    tier: "Theoretical Deep Dive",
-    steps: [
-      "Study the underlying principles of {goal}",
-      "Learn how {goal} impacts other industries",
-      "Analyze case studies of common failures in {goal}",
-      "Understand the ethical considerations of {goal}",
-      "Watch a technical lecture on {goal} methodology",
-      "Summarize the top 3 theories in the field",
-      "Explain {goal} to a non-expert to test your knowledge",
-      "Read a peer-reviewed paper or whitepaper on {goal}",
-      "Identify current trends changing the face of {goal}",
-      "Write a short essay on the future of {goal}"
-    ]
-  },
-  {
-    tier: "Hands-on Basic Drills",
-    steps: [
-      "Complete your first 'Hello World' equivalent in {goal}",
-      "Perform daily 30-minute practice sessions",
-      "Replicate a simple existing project in {goal}",
-      "Troubleshoot 3 common beginner errors",
-      "Document your initial hands-on workflow",
-      "Focus on accuracy over speed in {goal} basics",
-      "Learn a shortcut or automation for a repetitive task",
-      "Compare your work to a 'standard' beginner project",
-      "Implement a small change to a proven {goal} formula",
-      "Build a simple habit loop to ensure daily progress"
-    ]
-  },
-  {
-    tier: "Intermediate Implementation",
-    steps: [
-      "Build a multi-stage project involving {goal}",
-      "Incorporate 2 different techniques into one workflow",
-      "Optimize your first project for better efficiency",
-      "Learn to use professional-grade tools for {goal}",
-      "Focus on 'Best Practices' and industry standards",
-      "Debug or refactor an old {goal} attempt",
-      "Standardize your personal {goal} workflow",
-      "Experiment with 'Plan B' strategies in your project",
-      "Increase the complexity of your practice drills",
-      "Start a blog or log detailing your {goal} progress"
-    ]
-  },
-  {
-    tier: "Collaborative Practice & Feedback",
-    steps: [
-      "Submit your {goal} work for a public peer review",
-      "Participate in a 48-hour 'Jam' or challenge",
-      "Offer help to a beginner in {goal}",
-      "Collaborate on a project with a partner",
-      "Analyze feedback and create a 'Fix List'",
-      "Join a live Q&A or workshop about {goal}",
-      "Defend your choices in a {goal} project to others",
-      "Learn how to give constructive criticism in this field",
-      "Network with 3 people at your current level",
-      "Adapt your style based on external professional input"
-    ]
-  },
-  {
-    tier: "Advanced Optimization",
-    steps: [
-      "Analyze the bottlenecks in your {goal} process",
-      "Apply high-level performance optimization",
-      "Learn the 'Math' or 'Deep Logic' behind {goal}",
-      "Create a custom tool or template for your work",
-      "Study 'Edge Cases'—what happens when things go wrong",
-      "Refine your personal aesthetic/style in {goal}",
-      "Focus on the last 10% of quality (The Polish)",
-      "Automate 50% of your current {goal} workflow",
-      "Study the psychology of {goal} user/consumer behavior",
-      "Rewrite/Redesign your most successful project"
-    ]
-  },
-  {
-    tier: "Strategic Application",
-    steps: [
-      "Develop a 6-month roadmap for a major {goal} goal",
-      "Analyze the ROI (Return on Investment) of your skills",
-      "Create a 'Signature Project' that defines your style",
-      "Learn how to manage a team on a {goal} project",
-      "Pitch a {goal} idea to a professional or client",
-      "Study the 'Business Side' of {goal}",
-      "Diversify your application of {goal} across platforms",
-      "Identify high-value problems in {goal} that need solving",
-      "Implement risk-management strategies in your work",
-      "Evaluate the scalability of your current projects"
-    ]
-  },
-  {
-    tier: "Contribution & Ecosystem",
-    steps: [
-      "Contribute to a major repository or library",
-      "Write a detailed tutorial for an advanced topic",
-      "Speak at a local meetup or online webinar",
-      "Mentor someone through their first {goal} project",
-      "Curate a list of 'Best Resources' for the community",
-      "Participate in shaping {goal} industry standards",
-      "Launch a public-facing product or initiative",
-      "Translate a {goal} resource for a different language",
-      "Organize a small community event around {goal}",
-      "Apply for a professional certification or award"
-    ]
-  },
-  {
-    tier: "Mastery & Innovation",
-    steps: [
-      "Invent a new technique or approach in {goal}",
-      "Publish an original research or thought-leadership piece",
-      "Develop a long-term vision for the future of {goal}",
-      "Become a go-to consultant for complex {goal} issues",
-      "Maintain a high-level of consistency for 1 year+",
-      "Audit your own mastery and identify the 'Final 1%'",
-      "Build a legacy project that survives without you",
-      "Integrate {goal} with a completely unrelated field",
-      "Teach a Masterclass on {goal}",
-      "Reflect on your journey and set a new 'Master' goal"
-    ]
-  }
-];
-
-/**
- * ── MAIN CALLER ──
- * Generates the roadmap without any API calls.
- */
-async function callGemini(goalTitle) {
-  // We simulate a tiny delay so the UI feels "active"
-  await new Promise(r => setTimeout(r, 600));
-
-  console.log(`Generating Template Roadmap for: ${goalTitle}`);
-
-  const p = state.profile ?? {};
-  const userName = p.name ? `${p.name}` : "User";
-
-  // Map the archetype to the specific goalTitle
-  return ROADMAP_ARCHETYPE.map((tierData, i) => {
-    return {
-      title: `Tier ${i + 1}: ${tierData.tier}`,
-      quests: tierData.steps.map((step) => {
-        // Replace the placeholder with the actual goal
-        const formattedTitle = step.replace(/{goal}/g, goalTitle);
-        
-        return {
-          title: formattedTitle,
-          completed: false,
-          notes: ''
-        };
+  try {
+    const response = await fetch('/api/generate-roadmap/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        title: goalTitle,
+        profile: profileContext
       })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    
+    if (!data.tiers || !Array.isArray(data.tiers)) {
+      throw new Error('Invalid response from server');
+    }
+
+    return parseAIResponse(data.tiers);
+
+  } catch (err) {
+    console.error('AI Error:', err);
+    throw err;
+  }
+}
+
+function parseAIResponse(tiers) {
+  return Array.from({ length: 10 }, (_, i) => {
+    const src = tiers[i] || {};
+    const rawQ = Array.isArray(src.quests) ? src.quests : [];
+
+    const quests = Array.from({ length: 10 }, (_, j) => {
+      const q = rawQ[j];
+      const title =
+        typeof q === 'string'        ? q :
+        typeof q?.title === 'string' ? q.title :
+        `Task ${j + 1}`;
+      return { title, completed: false, notes: '' };
+    });
+
+    return {
+      title: typeof src.title === 'string' ? src.title : `Tier ${i + 1}`,
+      quests,
     };
   });
 }
@@ -1440,9 +1174,7 @@ async function callGemini(goalTitle) {
 // ================================================================
 //  Profile
 // ================================================================
-
 function liveUpdateProfile() {
-  // Update the avatar + name in sidebar instantly
   const name    = document.getElementById('pf-name')?.value || '';
   const surname = document.getElementById('pf-surname')?.value || '';
   const av = document.getElementById('pf-av');
@@ -1466,3 +1198,230 @@ function saveProfile() {
 // ================================================================
 function show(id) { document.getElementById(id)?.classList.remove('hidden'); }
 function hide(id) { document.getElementById(id)?.classList.add('hidden'); }
+
+
+
+
+// ================================================================
+//  Mobile Detection
+// ================================================================
+function isMobile() {
+  return window.innerWidth <= 680;
+}
+ 
+// ================================================================
+//  Mobile Navigation State
+// ================================================================
+const Mobile = {
+  // Slide goal list out, main content in
+  openGoal() {
+    if (!isMobile()) return;
+    const sb = document.getElementById('sidebar-content');
+    const main = document.getElementById('main-content');
+    if (sb)   sb.classList.add('slide-out');
+    if (main) main.classList.add('slide-in');
+  },
+ 
+  // Slide back to goal list
+  goBack() {
+    if (!isMobile()) return;
+    const sb = document.getElementById('sidebar-content');
+    const main = document.getElementById('main-content');
+    if (sb)   sb.classList.remove('slide-out');
+    if (main) main.classList.remove('slide-in');
+    // Clear selected goal
+    currentGoalId = null;
+    renderSidebar();
+    renderMain();
+  },
+ 
+  // For pages that don't use the sidebar (leaderboard, profile, archive)
+  showFullMain() {
+    if (!isMobile()) return;
+    const sb = document.getElementById('sidebar-content');
+    const main = document.getElementById('main-content');
+    if (sb)   sb.classList.add('slide-out');
+    if (main) main.classList.add('slide-in');
+  },
+ 
+  // Return to sidebar-first view (home)
+  showSidebar() {
+    if (!isMobile()) return;
+    const sb = document.getElementById('sidebar-content');
+    const main = document.getElementById('main-content');
+    if (sb)   sb.classList.remove('slide-out');
+    if (main) main.classList.remove('slide-in');
+  },
+ 
+  // Inject back button into goal-detail-header
+  injectBackButton(goalTitle) {
+    const header = document.querySelector('.goal-detail-header');
+    if (!header || header.querySelector('.mobile-back-btn')) return;
+ 
+    const btn = document.createElement('button');
+    btn.className = 'mobile-back-btn';
+    btn.innerHTML = '<i class="fas fa-arrow-left"></i>';
+    btn.setAttribute('aria-label', 'Back');
+    btn.addEventListener('click', () => Mobile.goBack());
+    header.insertBefore(btn, header.firstChild);
+  },
+ 
+  // Leaderboard: hide sidebar entirely
+  setLeaderboardMode(active) {
+    document.body.classList.toggle('leaderboard-active', active);
+    if (active && isMobile()) {
+      Mobile.showFullMain();
+    }
+  },
+ 
+  // Reset all mobile state
+  reset() {
+    if (!isMobile()) return;
+    Mobile.showSidebar();
+  }
+};
+ 
+// ================================================================
+//  Patch: openGoal
+//  Called when user taps a goal in sidebar
+// ================================================================
+const _originalOpenGoal = window.openGoal;
+window.openGoal = function(goalId) {
+  _originalOpenGoal(goalId);
+  if (isMobile()) {
+    Mobile.openGoal();
+    // Wait for renderMain to finish, then inject back button
+    requestAnimationFrame(() => Mobile.injectBackButton());
+  }
+};
+ 
+// ================================================================
+//  Patch: navigate
+//  Called on tab/page switch
+// ================================================================
+const _originalNavigate = window.navigate;
+window.navigate = function(pageId) {
+  _originalNavigate(pageId);
+ 
+  if (!isMobile()) return;
+ 
+  if (pageId === 'home') {
+    // Home: show sidebar (goal list) first
+    Mobile.setLeaderboardMode(false);
+    Mobile.showSidebar();
+  } else if (pageId === 'leaderboard') {
+    // Leaderboard: full main, no sidebar row 2
+    Mobile.setLeaderboardMode(true);
+  } else {
+    // Profile, archive: full main
+    Mobile.setLeaderboardMode(false);
+    Mobile.showFullMain();
+  }
+};
+ 
+// ================================================================
+//  Patch: renderGoalDetail
+//  Inject back button after render on mobile
+// ================================================================
+const _originalRenderGoalDetail = window.renderGoalDetail;
+window.renderGoalDetail = function(main) {
+  _originalRenderGoalDetail(main);
+  if (isMobile()) {
+    requestAnimationFrame(() => Mobile.injectBackButton());
+  }
+};
+ 
+// ================================================================
+//  Patch: navigate('home') via ESC key
+//  When ESC clears currentGoalId, go back to sidebar on mobile
+// ================================================================
+(function patchEsc() {
+  // Remove old listener and add new patched one
+  // We override by wrapping the initEsc logic
+  const _origInitEsc = window.initEsc;
+  window.initEsc = function() {
+    _origInitEsc();
+    // Additional ESC handler for mobile back
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Escape') return;
+      if (isMobile() && currentGoalId === null) {
+        Mobile.goBack();
+      }
+    });
+  };
+})();
+ 
+// ================================================================
+//  Bottom Tab Bar: hamburger nav-item → settings icon
+//  Marks the hamburger nav-item with nav-hamburger class
+// ================================================================
+function initBottomTabBar() {
+  if (!isMobile()) return;
+ 
+  // Find the nav-item that opens the drawer (menuBtn parent)
+  const menuBtn = document.getElementById('menuBtn');
+  if (menuBtn) {
+    const navItem = menuBtn.closest('.nav-item') || menuBtn;
+    navItem.classList.add('nav-hamburger');
+  }
+}
+ 
+// ================================================================
+//  Swipe Back Gesture (right-swipe from left edge → go back)
+// ================================================================
+function initSwipeBack() {
+  let startX = 0, startY = 0;
+ 
+  document.addEventListener('touchstart', e => {
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+  }, { passive: true });
+ 
+  document.addEventListener('touchend', e => {
+    if (!isMobile()) return;
+    const dx = e.changedTouches[0].clientX - startX;
+    const dy = Math.abs(e.changedTouches[0].clientY - startY);
+ 
+    // Right swipe from left 30px edge, mostly horizontal
+    if (startX < 30 && dx > 60 && dy < 60) {
+      if (currentGoalId !== null) {
+        Mobile.goBack();
+      }
+    }
+  }, { passive: true });
+}
+ 
+// ================================================================
+//  Resize handler: reset mobile state on window resize
+// ================================================================
+function initResizeHandler() {
+  let prevMobile = isMobile();
+  window.addEventListener('resize', () => {
+    const nowMobile = isMobile();
+    if (prevMobile !== nowMobile) {
+      prevMobile = nowMobile;
+      // Switched between mobile/desktop: reset slide states
+      const sb = document.getElementById('sidebar-content');
+      const main = document.getElementById('main-content');
+      if (sb)   { sb.classList.remove('slide-out'); }
+      if (main) { main.classList.remove('slide-in'); }
+      document.body.classList.remove('leaderboard-active');
+      // Re-apply correct state for current page
+      navigate(currentPage);
+    }
+  });
+}
+ 
+// ================================================================
+//  Boot — runs after index.js window.onload
+// ================================================================
+(function initMobile() {
+  // Wait for DOM + index.js to finish
+  const _origOnload = window.onload;
+  window.onload = async function() {
+    if (_origOnload) await _origOnload();
+    initBottomTabBar();
+    initSwipeBack();
+    initResizeHandler();
+  };
+})();
