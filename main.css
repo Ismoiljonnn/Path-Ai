@@ -1245,3 +1245,394 @@ input:checked + .slider::before { transform: translateX(20px); }
   /* ── Side drawer full width ── */
   .side-drawer { width: 88%; }
 }
+
+
+/* ================================================================
+   MyJourney — responsive.css
+   Telegram-style mobile layout
+   Import this AFTER main.css and style.css
+================================================================ */
+ 
+/* ================================================================
+   MOBILE BREAKPOINT  ≤ 680px
+================================================================ */
+@media (max-width: 680px) {
+ 
+  /* ----------------------------------------------------------
+     1. APP WRAPPER — full screen stack
+  ---------------------------------------------------------- */
+  html, body { overflow: hidden; }
+ 
+  .app-wrapper {
+    flex-direction: column;
+    height: 100dvh;          /* dynamic viewport height */
+    width: 100vw;
+    overflow: hidden;
+  }
+ 
+  /* ----------------------------------------------------------
+     2. ICON SIDEBAR  →  BOTTOM TAB BAR (row of 4 icons)
+  ---------------------------------------------------------- */
+  .sidebar-icons {
+    width: 100%;
+    height: 56px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-around;
+    border-right: none;
+    border-top: 1px solid var(--border);
+    order: 3;                /* push to bottom */
+    flex-shrink: 0;
+  }
+ 
+  .nav-item {
+    flex: 1;
+    height: 56px;
+    width: auto;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 10px;
+    overflow: visible;
+  }
+ 
+  .nav-icon { font-size: 20px; }
+ 
+  /* hamburger → settings gear icon area */
+  .nav-item.nav-hamburger .hamburger { display: none; }
+  .nav-item.nav-hamburger::after {
+    content: '\f013';        /* fa-gear fallback */
+    font-family: 'Font Awesome 6 Free', sans-serif;
+    font-weight: 900;
+    font-size: 20px;
+    color: var(--text-3);
+  }
+  .nav-item.nav-hamburger.active::after { color: var(--accent); }
+ 
+  /* ----------------------------------------------------------
+     3. CONTENT SIDEBAR (goal list)  →  FULL SCREEN PANEL
+  ---------------------------------------------------------- */
+  .sidebar-content {
+    display: flex !important;      /* override the hidden rule */
+    position: fixed;
+    inset: 0 0 56px 0;            /* leave room for bottom tab bar */
+    width: 100% !important;
+    z-index: 50;
+    transform: translateX(0);
+    transition: transform 0.26s cubic-bezier(0.4, 0, 0.2, 1);
+    border-right: none;
+    overflow-y: auto;
+  }
+ 
+  /* When a goal is selected, slide the list off-screen to the left */
+  .sidebar-content.slide-out {
+    transform: translateX(-100%);
+    pointer-events: none;
+  }
+ 
+  /* Remove "Pick a goal" empty-state centre widget in sidebar */
+  .sb-empty { display: none; }
+ 
+  /* Goal list fills full height — no centering widget */
+  .sidebar-content .goal-item:first-child { margin-top: 0; }
+ 
+  /* ----------------------------------------------------------
+     4. MAIN CONTENT  →  FULL SCREEN (slides in from right)
+  ---------------------------------------------------------- */
+  .main-content {
+    position: fixed;
+    inset: 0 0 56px 0;
+    width: 100%;
+    transform: translateX(100%);
+    transition: transform 0.26s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 51;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+ 
+  /* When a goal is active, slide the main content in */
+  .main-content.slide-in {
+    transform: translateX(0);
+  }
+ 
+  /* ----------------------------------------------------------
+     5. GOAL DETAIL HEADER  →  TELEGRAM-STYLE TOP BAR
+  ---------------------------------------------------------- */
+  .goal-detail-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: nowrap;
+    backdrop-filter: blur(12px);
+  }
+ 
+  /* Back button (inject via JS or add in HTML) */
+  .mobile-back-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: none;
+    background: none;
+    color: var(--accent);
+    font-size: 20px;
+    cursor: pointer;
+    flex-shrink: 0;
+    padding: 0;
+    border-radius: 50%;
+    transition: background 0.15s;
+  }
+  .mobile-back-btn:hover { background: var(--bg-hover); }
+ 
+  /* Hide on desktop */
+  .mobile-back-btn { display: flex; }
+ 
+  .gdh-left {
+    flex: 1;
+    min-width: 0;
+  }
+  .gdh-left h2 {
+    font-size: 18px;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+ 
+  .del-goal-btn span { display: none; }   /* hide text, keep icon */
+  .del-goal-btn {
+    width: 36px; height: 36px;
+    padding: 0;
+    justify-content: center;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+ 
+  /* ----------------------------------------------------------
+     6. GOAL BODY — stack quests + tiers vertically
+  ---------------------------------------------------------- */
+  .goal-body {
+    flex-direction: column;
+    overflow: visible;
+    height: auto;
+  }
+ 
+  /* Quest area — scrolls with the page */
+  .quest-area {
+    overflow: visible;
+    padding: 16px 16px 12px;
+  }
+ 
+  /* Quests slide in from below */
+  .quest-card {
+    animation: slideUpIn 0.28s ease both;
+  }
+  @keyframes slideUpIn {
+    from { opacity: 0; transform: translateY(18px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .quest-card:nth-child(1)  { animation-delay: 0.04s; }
+  .quest-card:nth-child(2)  { animation-delay: 0.08s; }
+  .quest-card:nth-child(3)  { animation-delay: 0.12s; }
+  .quest-card:nth-child(4)  { animation-delay: 0.16s; }
+  .quest-card:nth-child(5)  { animation-delay: 0.20s; }
+  .quest-card:nth-child(6)  { animation-delay: 0.24s; }
+  .quest-card:nth-child(7)  { animation-delay: 0.28s; }
+  .quest-card:nth-child(8)  { animation-delay: 0.32s; }
+  .quest-card:nth-child(9)  { animation-delay: 0.36s; }
+  .quest-card:nth-child(10) { animation-delay: 0.40s; }
+ 
+  /* ----------------------------------------------------------
+     7. TIERS SIDEBAR  →  HORIZONTAL SCROLLABLE ROW
+  ---------------------------------------------------------- */
+  .tiers-sidebar {
+    width: 100%;
+    height: auto;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 14px 16px;
+    gap: 10px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .tiers-sidebar::-webkit-scrollbar { display: none; }
+ 
+  .tier-node {
+    flex-shrink: 0;
+    width: 44px; height: 44px;
+  }
+ 
+  /* ----------------------------------------------------------
+     8. RESIZER — hide on mobile
+  ---------------------------------------------------------- */
+  .resizer { display: none !important; }
+ 
+  /* ----------------------------------------------------------
+     9. LEADERBOARD — no sidebar row 2 (sidebar-content hidden)
+  ---------------------------------------------------------- */
+  /* When leaderboard is active, sidebar-content does NOT show */
+  .leaderboard-active .sidebar-content {
+    display: none !important;
+  }
+ 
+  .leaderboard-page {
+    padding: 16px 16px 24px;
+  }
+ 
+  /* Leaderboard header as top bar */
+  .leaderboard-page .page-title {
+    font-size: 18px;
+    margin-bottom: 14px;
+    position: sticky;
+    top: 0;
+    background: var(--bg-primary);
+    padding: 14px 0 12px;
+    z-index: 5;
+    border-bottom: 1px solid var(--border);
+  }
+ 
+  .lb-tabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 4px;
+  }
+  .lb-tabs::-webkit-scrollbar { display: none; }
+  .lb-tab { white-space: nowrap; }
+ 
+  .lb-stats { gap: 8px; }
+  .lb-goals, .lb-quests { display: none; } /* keep only points on mobile */
+ 
+  /* ----------------------------------------------------------
+     10. SIDE DRAWER — full width on mobile
+  ---------------------------------------------------------- */
+  .side-drawer {
+    width: 100%;
+  }
+ 
+  /* ----------------------------------------------------------
+     11. MODALS — full-width bottom sheet on mobile
+  ---------------------------------------------------------- */
+  .modal {
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    transform: none !important;
+    width: 100%;
+    max-width: 100%;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    border-top-left-radius: var(--radius-lg);
+    border-top-right-radius: var(--radius-lg);
+    padding: 20px 20px 32px;
+    animation: sheet-up 0.22s ease;
+  }
+  @keyframes sheet-up {
+    from { transform: translateY(100%) !important; }
+    to   { transform: translateY(0) !important; }
+  }
+ 
+  /* ----------------------------------------------------------
+     12. PROFILE & ARCHIVE PAGES
+  ---------------------------------------------------------- */
+  .profile-page,
+  .archive-page {
+    padding: 16px 16px 80px;
+  }
+ 
+  .page-title {
+    font-size: 18px;
+    position: sticky;
+    top: 0;
+    background: var(--bg-primary);
+    padding: 14px 0 12px;
+    z-index: 5;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 20px;
+  }
+ 
+  .field-row { flex-direction: column; }
+ 
+  /* ----------------------------------------------------------
+     13. TOAST — above bottom tab bar
+  ---------------------------------------------------------- */
+  .toast { bottom: 72px; }
+ 
+  /* ----------------------------------------------------------
+     14. PROGRESS BAR in goal header — smaller
+  ---------------------------------------------------------- */
+  .progress-bar-bg { width: 120px; }
+}
+ 
+/* ================================================================
+   TABLET BREAKPOINT  681px – 960px
+================================================================ */
+@media (min-width: 681px) and (max-width: 960px) {
+  :root {
+    --sb-w: 240px;
+    --nav-w: 56px;
+  }
+ 
+  .gdh-left h2 { font-size: 20px; }
+  .quest-area { padding: 18px 24px; }
+  .goal-detail-header { padding: 18px 24px; }
+ 
+  .progress-bar-bg { width: 160px; }
+}
+ 
+/* ================================================================
+   DESKTOP — ensure mobile-only elements are hidden
+================================================================ */
+@media (min-width: 681px) {
+  .mobile-back-btn { display: none; }
+  .slide-out, .slide-in { transform: none !important; }
+ 
+  /* Reset any accidental mobile overrides */
+  .sidebar-content {
+    position: relative !important;
+    transform: none !important;
+    inset: auto !important;
+    width: var(--sb-w) !important;
+    height: 100% !important;
+    z-index: auto !important;
+  }
+ 
+  .main-content {
+    position: relative !important;
+    transform: none !important;
+    inset: auto !important;
+    width: auto !important;
+    z-index: auto !important;
+  }
+ 
+  .sidebar-icons {
+    width: var(--nav-w);
+    height: 100%;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    border-top: none;
+    order: 0;
+  }
+ 
+  .nav-item { height: 60px; width: 100%; }
+  .tiers-sidebar {
+    width: 84px;
+    height: auto;
+    flex-direction: column;
+    border-top: none;
+    border-left: 1px solid var(--border);
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 20px 0;
+  }
+  .sb-empty { display: block; }
+}
